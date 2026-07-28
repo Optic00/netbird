@@ -5,10 +5,13 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/sirupsen/logrus"
+	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"github.com/netbirdio/netbird/client/iface/wgaddr"
@@ -106,24 +109,31 @@ func TestConnMgr_ActivatePeerConcurrentWithLifecycle(t *testing.T) {
 }
 
 func TestInactivityThresholdEnv(t *testing.T) {
+	maxMinutes := int64(time.Duration(1<<63-1) / time.Minute)
+	hook := logrustest.NewGlobal()
+
 	tests := []struct {
-		name string
-		val  string
-		want *time.Duration
+		name     string
+		val      string
+		want     *time.Duration
+		wantWarn bool
 	}{
 		{name: "unset", val: "", want: nil},
 		{name: "go duration minutes", val: "30m", want: durPtr(30 * time.Minute)},
 		{name: "go duration hours", val: "1h", want: durPtr(time.Hour)},
 		{name: "go duration seconds", val: "90s", want: durPtr(90 * time.Second)},
 		{name: "bare integer is minutes (backwards compat)", val: "5", want: durPtr(5 * time.Minute)},
-		{name: "zero duration", val: "0s", want: nil},
-		{name: "zero integer", val: "0", want: nil},
-		{name: "negative duration", val: "-5m", want: nil},
-		{name: "garbage", val: "abc", want: nil},
+		{name: "max bare minutes accepted", val: strconv.FormatInt(maxMinutes, 10), want: durPtr(time.Duration(maxMinutes) * time.Minute)},
+		{name: "overflowing bare minutes warns", val: strconv.FormatInt(maxMinutes+1, 10), want: nil, wantWarn: true},
+		{name: "zero duration warns", val: "0s", want: nil, wantWarn: true},
+		{name: "zero integer warns", val: "0", want: nil, wantWarn: true},
+		{name: "negative duration warns", val: "-5m", want: nil, wantWarn: true},
+		{name: "garbage warns", val: "abc", want: nil, wantWarn: true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			hook.Reset()
 			t.Setenv(lazyconn.EnvInactivityThreshold, tc.val)
 			got := inactivityThresholdEnv()
 			switch {
@@ -133,6 +143,11 @@ func TestInactivityThresholdEnv(t *testing.T) {
 				t.Fatalf("want %v, got nil", *tc.want)
 			case tc.want != nil && *got != *tc.want:
 				t.Fatalf("want %v, got %v", *tc.want, *got)
+			}
+
+			gotWarn := hook.LastEntry() != nil && hook.LastEntry().Level == logrus.WarnLevel
+			if gotWarn != tc.wantWarn {
+				t.Fatalf("warn logged = %v, want %v", gotWarn, tc.wantWarn)
 			}
 		})
 	}

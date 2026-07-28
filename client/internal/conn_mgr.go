@@ -379,6 +379,10 @@ func resolveLazyForce(mdmState lazyconn.State) lazyForce {
 	}
 }
 
+// maxInactivityMinutes is the largest bare-integer minute value that still fits in a
+// time.Duration without overflowing.
+const maxInactivityMinutes = int64(time.Duration(1<<63-1) / time.Minute)
+
 func inactivityThresholdEnv() *time.Duration {
 	envValue := os.Getenv(lazyconn.EnvInactivityThreshold)
 	if envValue == "" {
@@ -387,15 +391,13 @@ func inactivityThresholdEnv() *time.Duration {
 
 	// Documented format: a Go duration such as "30m" or "1h".
 	if d, err := time.ParseDuration(envValue); err == nil {
-		if d <= 0 {
-			return nil
+		if d > 0 {
+			return &d
 		}
-		return &d
-	}
-
-	// Backwards compatibility: a bare integer used to be interpreted as minutes.
-	if parsedMinutes, err := strconv.Atoi(envValue); err == nil && parsedMinutes > 0 {
-		d := time.Duration(parsedMinutes) * time.Minute
+		// Zero/negative durations are invalid; fall through to the warning.
+	} else if minutes, err := strconv.ParseInt(envValue, 10, 64); err == nil && minutes > 0 && minutes <= maxInactivityMinutes {
+		// Backwards compatibility: a bare integer used to be interpreted as minutes.
+		d := time.Duration(minutes) * time.Minute
 		return &d
 	}
 
