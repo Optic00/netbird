@@ -43,7 +43,7 @@ func TestUpload(t *testing.T) {
 	fileContent := []byte("test file content")
 	err := os.WriteFile(file, fileContent, 0640)
 	require.NoError(t, err)
-	key, err := UploadDebugBundle(context.Background(), testURL+types.GetURLPath, testURL, file)
+	key, err := UploadDebugBundle(context.Background(), testURL+types.GetURLPath, testURL, file, true)
 	require.NoError(t, err)
 	id := getURLHash(testURL)
 	require.Contains(t, key, id+"/")
